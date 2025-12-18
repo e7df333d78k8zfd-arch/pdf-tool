@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>PDF編集ツール v2（実務用）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#2563eb" />
+<link rel="manifest" href="manifest.json" />
+<style>
+:root{--bg:#f1f5f9;--card:#fff;--pri:#2563eb;--muted:#64748b}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont;background:var(--bg)}
+header{position:sticky;top:0;background:var(--pri);color:#fff;padding:12px 14px;font-weight:600;z-index:5}
+main{padding:10px}
+#picker{border:2px dashed var(--pri);border-radius:14px;background:#eef2ff;padding:18px;text-align:center;margin-bottom:10px}
+#picker small{color:var(--muted)}
+#pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;list-style:none;padding:0;margin:0}
+.card{background:var(--card);border-radius:14px;box-shadow:0 4px 10px rgba(0,0,0,.12);padding:8px}
+.card header{background:none;color:#111;padding:0 0 6px 0;position:static;font-size:12px}
+.card canvas{width:100%;border-radius:10px}
+.actions{display:flex;gap:4px;margin-top:6px}
+.actions button{flex:1;padding:6px 0;border-radius:10px;border:none;font-size:14px}
+.btn{background:#e5e7eb}
+.btn-pri{background:var(--pri);color:#fff}
+.btn-warn{background:#fee2e2}
+footer{position:sticky;bottom:0;background:#fff;box-shadow:0 -4px 10px rgba(0,0,0,.12);padding:10px;display:grid;gap:6px}
+footer .row{display:flex;gap:6px}
+footer button,input{flex:1;padding:10px;border-radius:12px;border:1px solid #cbd5f5;font-size:16px}
+#preview{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10}
+#preview iframe{width:90%;height:90%;background:#fff;border-radius:12px}
+</style>
+</head>
+<body>
+<header>📄 PDF編集ツール v2（実務用）</header>
+<main>
+<div id="picker">PDFを選択<br><small>複数可 / オフライン動作</small></div>
+<input id="file" type="file" accept="application/pdf" multiple hidden />
+<ul id="pages"></ul>
+</main>
+<footer>
+<div class="row">
+<button onclick="undo()">↩ 戻す</button>
+<button onclick="redo()">↪ やり直し</button>
+</div>
+<div class="row">
+<input id="name" value="edited.pdf" />
+<button class="btn-pri" onclick="savePdf()">💾 保存</button>
+</div>
+</footer>
+<div id="preview" onclick="this.style.display='none'"><iframe></iframe></div>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
+<script type="module">
+import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+const picker=document.getElementById('picker');const file=document.getElementById('file');const pagesEl=document.getElementById('pages');const preview=document.getElementById('preview');const iframe=preview.querySelector('iframe');
+let pages=[];let hist=[];let hi=-1;
+picker.onclick=()=>file.click();
+file.onchange=async()=>{for(const f of file.files){const b=await f.arrayBuffer();const pdf=await PDFLib.PDFDocument.load(b);const proxy=await pdfjsLib.getDocument({data:b}).promise;for(let i=0;i<pdf.getPageCount();i++)pages.push({pdf,proxy,i,rot:0});}save();render();};
+function save(){hist=hist.slice(0,hi+1);hist.push(JSON.parse(JSON.stringify(pages)));hi=hist.length-1}
+window.undo=()=>{if(hi>0){hi--;pages=JSON.parse(JSON.stringify(hist[hi]));render(false)}}
+window.redo=()=>{if(hi<hist.length-1){hi++;pages=JSON.parse(JSON.stringify(hist[hi]));render(false)}}
+function render(store=true){pagesEl.innerHTML='';pages.forEach(async(p,idx)=>{const li=document.createElement('li');li.className='card';li.innerHTML=`<header>ページ ${idx+1}</header>`;const c=document.createElement('canvas');li.appendChild(c);const a=document.createElement('div');a.className='actions';a.innerHTML=`<button class='btn' data-a='up'>⬆</button><button class='btn' data-a='down'>⬇</button><button class='btn' data-a='rot'>🔄</button><button class='btn-warn' data-a='del'>🗑</button>`;li.appendChild(a);pagesEl.appendChild(li);
+const page=await p.proxy.getPage(p.i+1);const v=page.getViewport({scale:.5,rotation:p.rot});c.width=v.width;c.height=v.height;await page.render({canvasContext:c.getContext('2d'),viewport:v}).promise;c.onclick=()=>openPreview(idx);
+a.onclick=e=>{const ac=e.target.dataset.a;if(!ac)return;if(ac==='up'&&idx>0)[pages[idx-1],pages[idx]]=[pages[idx],pages[idx-1]];if(ac==='down'&&idx<pages.length-1)[pages[idx+1],pages[idx]]=[pages[idx],pages[idx+1]];if(ac==='rot')p.rot=(p.rot+90)%360;if(ac==='del'&&confirm('削除しますか？'))pages.splice(idx,1);render();};});if(store)save();}
+async function openPreview(i){const p=pages[i];const d=await PDFLib.PDFDocument.create();const [cp]=await d.copyPages(p.pdf,[p.i]);cp.setRotation(PDFLib.degrees(p.rot));d.addPage(cp);const u=URL.createObjectURL(new Blob([await d.save()],{type:'application/pdf'}));iframe.src=u;preview.style.display='flex';}
+window.savePdf=async()=>{if(!pages.length)return alert('PDFなし');const d=await PDFLib.PDFDocument.create();for(const p of pages){const [cp]=await d.copyPages(p.pdf,[p.i]);cp.setRotation(PDFLib.degrees(p.rot));d.addPage(cp);}const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([await d.save()],{type:'application/pdf'}));a.download=document.getElementById('name').value||'edited.pdf';a.click();};
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
