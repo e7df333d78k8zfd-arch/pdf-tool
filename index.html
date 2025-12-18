@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PDF編集ツール（スマホ対応PWA）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#3498db">
+<link rel="manifest" href="manifest.json">
+<style>
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  margin: 0;
+  padding: 10px;
+}
+header {
+  position: sticky;
+  top: 0;
+  background: #3498db;
+  color: white;
+  padding: 10px;
+  text-align: center;
+  font-size: 18px;
+}
+#dropZone {
+  border: 2px dashed #3498db;
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  margin: 10px 0;
+}
+#pageList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+}
+#pageList li {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  padding: 8px;
+}
+canvas {
+  width: 100%;
+  border-radius: 8px;
+}
+.page-buttons {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.page-buttons button {
+  flex: 1;
+  margin: 2px;
+  font-size: 14px;
+}
+footer {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  padding: 10px;
+  box-shadow: 0 -2px 6px rgba(0,0,0,0.15);
+}
+footer button {
+  width: 100%;
+  font-size: 16px;
+  padding: 10px;
+}
+</style>
+</head>
+<body>
+<header>📄 PDF編集ツール（スマホPWA）</header>
+
+<div id="dropZone">PDFをタップして選択</div>
+<input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+
+<ul id="pageList"></ul>
+
+<footer>
+  <button onclick="downloadPDF()">💾 PDFを保存</button>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
+<script type="module">
+import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const pageList = document.getElementById('pageList');
+let pages = [];
+
+dropZone.onclick = () => fileInput.click();
+
+fileInput.onchange = async () => {
+  const files = Array.from(fileInput.files);
+  for (const file of files) {
+    const bytes = await file.arrayBuffer();
+    const pdf = await PDFLib.PDFDocument.load(bytes);
+    const proxy = await pdfjsLib.getDocument({ data: bytes }).promise;
+    for (let i = 0; i < pdf.getPageCount(); i++) {
+      pages.push({ pdf, proxy, pageIndex: i, rotation: 0 });
+    }
+  }
+  render();
+};
+
+async function render() {
+  pageList.innerHTML = '';
+  for (let i = 0; i < pages.length; i++) {
+    const li = document.createElement('li');
+    const canvas = document.createElement('canvas');
+    li.appendChild(canvas);
+
+    const btns = document.createElement('div');
+    btns.className = 'page-buttons';
+
+    const up = document.createElement('button');
+    up.textContent = '⬆';
+    up.onclick = () => move(i, -1);
+    const down = document.createElement('button');
+    down.textContent = '⬇';
+    down.onclick = () => move(i, 1);
+    const rot = document.createElement('button');
+    rot.textContent = '🔄';
+    rot.onclick = () => rotate(i);
+
+    btns.append(up, down, rot);
+    li.appendChild(btns);
+    pageList.appendChild(li);
+
+    const page = await pages[i].proxy.getPage(pages[i].pageIndex + 1);
+    const viewport = page.getViewport({ scale: 0.5, rotation: pages[i].rotation });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  }
+}
+
+function move(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= pages.length) return;
+  [pages[i], pages[j]] = [pages[j], pages[i]];
+  render();
+}
+
+function rotate(i) {
+  pages[i].rotation = (pages[i].rotation + 90) % 360;
+  render();
+}
+
+async function downloadPDF() {
+  if (!pages.length) return alert('PDFがありません');
+  const out = await PDFLib.PDFDocument.create();
+  for (const p of pages) {
+    const [cp] = await out.copyPages(p.pdf, [p.pageIndex]);
+    if (p.rotation) cp.setRotation(PDFLib.degrees(p.rotation));
+    out.addPage(cp);
+  }
+  const blob = new Blob([await out.save()], { type: 'application/pdf' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'edited.pdf';
+  a.click();
+}
+
+// PWA Service Worker 登録
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>
